@@ -424,28 +424,10 @@ def _walk_global_ops(code):
 
 
 def _extract_class_dict(cls):
-    """Retrieve a copy of the dict of a class without the inherited method."""
+    """Copy a class's own attributes, including explicit overrides of its bases."""
     # Hack to circumvent non-predictable memoization caused by string interning.
     # See the inline comment in _class_setstate for details.
-    clsdict = {"".join(k): cls.__dict__[k] for k in sorted(cls.__dict__)}
-
-    if len(cls.__bases__) == 1:
-        inherited_dict = cls.__bases__[0].__dict__
-    else:
-        inherited_dict = {}
-        for base in reversed(cls.__bases__):
-            inherited_dict.update(base.__dict__)
-    to_remove = []
-    for name, value in clsdict.items():
-        try:
-            base_value = inherited_dict[name]
-            if value is base_value:
-                to_remove.append(name)
-        except KeyError:
-            pass
-    for name in to_remove:
-        clsdict.pop(name)
-    return clsdict
+    return {"".join(k): cls.__dict__[k] for k in sorted(cls.__dict__)}
 
 
 def is_tornado_coroutine(func):
@@ -1181,6 +1163,10 @@ def _class_setstate(obj, state):
     for attrname, attr in state.items():
         if attrname == "_abc_impl":
             registry = attr
+        elif attrname == "__module__" and obj.__dict__.get(attrname) == attr:
+            # Skeleton construction already sets __module__. Avoid invoking
+            # custom metaclass setters again unless the value has changed.
+            continue
         else:
             # Note: setting attribute names on a class automatically triggers their
             # interning in CPython:
