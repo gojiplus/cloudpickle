@@ -161,6 +161,74 @@ def test_class_explicit_overrides(protocol, multiple_inheritance):
 
 
 @pytest.mark.parametrize("protocol", [2, cloudpickle.DEFAULT_PROTOCOL])
+@pytest.mark.parametrize("multiple_inheritance", [False, True])
+def test_class_explicit_override_of_importable_unpicklable_attribute(
+    protocol, multiple_inheritance
+):
+    testpkg = pytest.importorskip("_cloudpickle_testpkg")
+
+    with subprocess_worker(protocol=protocol) as worker:
+
+        class Mixin:
+            pass
+
+        bases = (
+            (Mixin, testpkg.BaseWithLock)
+            if multiple_inheritance
+            else (testpkg.BaseWithLock,)
+        )
+
+        class Child(*bases):
+            shared = testpkg.BaseWithLock.shared
+
+        def check_override(child):
+            assert "shared" in child.__dict__
+            base = next(base for base in child.__bases__ if "shared" in base.__dict__)
+            assert child.__dict__["shared"] is base.shared
+
+        worker.run(check_override, Child)
+        check_override(pickle_depickle(Child, protocol=protocol))
+
+
+@pytest.mark.parametrize("protocol", [2, cloudpickle.DEFAULT_PROTOCOL])
+def test_class_explicit_override_keeps_existing_binding(monkeypatch, protocol):
+    testpkg = pytest.importorskip("_cloudpickle_testpkg")
+
+    class Child(testpkg.BaseWithLock):
+        shared = testpkg.BaseWithLock.shared
+
+    original = Child.shared
+    payload = cloudpickle.dumps(Child, protocol=protocol)
+    monkeypatch.setattr(testpkg.BaseWithLock, "shared", object())
+
+    restored = pickle.loads(payload)
+    assert restored is Child
+    assert restored.__dict__["shared"] is original
+
+
+@pytest.mark.parametrize("protocol", [2, cloudpickle.DEFAULT_PROTOCOL])
+def test_class_explicit_override_resolves_changed_importable_base(protocol):
+    testpkg = pytest.importorskip("_cloudpickle_testpkg")
+
+    with subprocess_worker(protocol=protocol) as worker:
+
+        class Child(testpkg.BaseWithLock):
+            shared = testpkg.BaseWithLock.shared
+
+        def replace_base_attribute():
+            import _cloudpickle_testpkg
+
+            _cloudpickle_testpkg.BaseWithLock.shared = object()
+
+        def check_override(child):
+            assert "shared" in child.__dict__
+            assert child.__dict__["shared"] is child.__bases__[0].shared
+
+        worker.run(replace_base_attribute)
+        worker.run(check_override, Child)
+
+
+@pytest.mark.parametrize("protocol", [2, cloudpickle.DEFAULT_PROTOCOL])
 def test_class_module_set_during_construction(monkeypatch, protocol):
     testpkg = pytest.importorskip("_cloudpickle_testpkg")
 
